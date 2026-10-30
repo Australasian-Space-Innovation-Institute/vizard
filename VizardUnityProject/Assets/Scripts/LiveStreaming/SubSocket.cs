@@ -20,7 +20,7 @@
 // NetMQ relies on System.Net.Sockets and a background listener thread, neither of
 // which exists in a WebGL player, so this entire class is compiled out of browser
 // builds. Browser builds reach Basilisk through VizWebSocketTransport instead.
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL 
 
 using System.Threading;
 using NetMQ;

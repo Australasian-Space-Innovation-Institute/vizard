@@ -106,6 +106,32 @@ public static class DataManager
         }
     }
 
+/// <summary>
+/// Live counterpart of LoadFile: the connected Basilisk is about to start a new
+/// run on the same stream. Deactivates the in-progress scenario and forgets every
+/// message of the old run, so the next message received is the new run's first.
+/// The caller reloads the Main Scene once that message has arrived.
+/// </summary>
+    public static void ResetForNewLiveRun()
+    {
+        Debug.Log("Resetting for a new live run.");
+        MessageList.PlaybackPaused = true;
+        MessageList.FollowLive = true;     //A new run starts at its live edge
+        LiveSmoothing.Reset();
+        MessageList.CurrentIndex = 0;
+        VizardGUISettings.OsculatingOrbitLinesVisible = false;
+        VizardGUISettings.TruePathLinesVisible = false;
+        VizardGUISettings.OsculatingGroundTrackOn = false;
+        VizardGUISettings.TruePathGroundTrackOn = false;
+        ScenarioObjectsContainer.gameObject.SetActive(false);
+        VizardGUISettings.GUICanvas.SetActive(false);
+        MainCameraUtilities.MainCamera.GetComponent<MainCameraMovementController>().enabled = false;
+        FirstMessageDisplayed = false;
+        ResetAllUtilities();
+        MessageList.ClearMessages();
+        MessageList.ResetFirstMessage();
+    }
+
 
 /// <summary>
 /// Write out op nav rendering timing metrics to file.

@@ -385,7 +385,25 @@ public class StartUpScreenManager : MonoBehaviour
                 }
             }
 
-            // ZMQ, or a bridge socket still handshaking.
+            // Two-way ZMQ (-directComm): the socket is open and the simulation
+            // connects to it whenever it is ready, so wait for as long as that takes,
+            // as over the bridge. An application that launches Vizard before its
+            // simulation starts (the Scarlet Alpha demo app) would otherwise find it
+            // has given up and closed its socket.
+            if (DataManager.IsLiveSim && !DataManager.SocketIsReceiveOnly && !overBridge)
+            {
+                if (!reportedWaiting)
+                {
+                    errorText.color = Color.blue;
+                    errorText.text = "Waiting for the simulation to start...";
+                    reportedWaiting = true;
+                }
+
+                yield return null;
+                continue;
+            }
+
+            // Receive-only ZMQ, or a bridge socket still handshaking.
             if (Time.realtimeSinceStartup - startTime > ConnectionTimeoutSeconds)
             {
                 Debug.Log("Timed out waiting for messages to load.");

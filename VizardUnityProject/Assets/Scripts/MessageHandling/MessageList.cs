@@ -34,6 +34,14 @@ public static class MessageList
 {
     public static bool PlaybackPaused = false;
 
+    /// <summary>
+    /// Live streaming: true while the view follows the newest message. Scrubbing back
+    /// turns it off, so the run keeps streaming into the buffer while the past is shown;
+    /// it turns back on when playback catches up with the newest message, or the time
+    /// slider is dragged to its end.
+    /// </summary>
+    public static bool FollowLive = true;
+
     private static string filepath;
 
     private static long bufferLimit = 10000000;
@@ -92,6 +100,12 @@ public static class MessageList
 
     public static double TimeStepSize { get; set; } //Assumes messages have a constant time step size
 
+    /// <summary>
+    /// While following a live run: the scene drawn between two frames (see
+    /// LiveSmoothing). Null otherwise. Set on the main thread only.
+    /// </summary>
+    public static volatile VizMessage BlendedMessage;
+
     public static VizMessage CurrentMessage
     {
         get
@@ -100,11 +114,19 @@ public static class MessageList
             {
                 return tempHoldMessage;
             }
-            else
+            VizMessage blended = BlendedMessage;
+            if (blended != null)
             {
-                return messages[CurrentIndex];
+                return blended;
             }
+            return messages[CurrentIndex];
         }
+    }
+
+    /// <summary>A frame, if it is in memory (no buffer loading).</summary>
+    public static bool TryGetMessage(int index, out VizMessage message)
+    {
+        return messages.TryGetValue(index, out message);
     }
 
     public static VizBroadcastSyncSettings LatestBroadcastSyncSettings { get; set; }
@@ -177,7 +199,7 @@ public static class MessageList
     public static void AddLiveMessage(VizMessage message)
     {
         AddMessage(timestepsTotal, message);
-        DataManager.DisplayMostRecentMessage = true;
+        DataManager.DisplayMostRecentMessage = FollowLive;
         timestepsTotal++;
         SetVisibleHistoryRanges();
     }

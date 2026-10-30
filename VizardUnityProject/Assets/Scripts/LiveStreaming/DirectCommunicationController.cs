@@ -20,6 +20,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using Google.Protobuf;
 using VizProtobufferMessage;
 
@@ -27,7 +28,7 @@ using VizProtobufferMessage;
 // in a WebGL player, so the ZMQ path is compiled out of browser builds. It stays
 // available in the Editor regardless of the selected build target so that
 // desktop development is unaffected while targeting WebGL.
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL 
 using NetMQ;
 #endif
 
@@ -41,7 +42,7 @@ using NetMQ;
 /// </summary>
 public class DirectCommunicationController : MonoBehaviour
 {
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL
     private ResSocket resSocket; //Response socket, used for two-way communication
     private SubSocket subSocket; //Subscribe socket, used for receive only communication
 #endif
@@ -49,7 +50,16 @@ public class DirectCommunicationController : MonoBehaviour
     private VizInputAccumulator vizInputs; //Vizard user inputs to live Basilisk sim to be communicated in next message
 
     private const float InputSendInterval = 0.05f; //Seconds between user input pushes over the bridge
+
+    //New-run reset, requested over the socket with "RESET" (see RequestNewRun)
+    private readonly object newRunGate = new object(); //Guards the two fields below across socket and main threads
+    private bool awaitingNewRun; //RESET received: hold the new run's messages until its first one arrives
+    private readonly Queue<VizMessage> newRunMessages = new Queue<VizMessage>(); //The held messages
     private float lastInputSentTime; //Unscaled time of the last user input push
+
+    //Camera change, requested over the socket with "CAMERA <name>" (see HandleCameraCommand).
+    //"CAMERA" with no name returns to the run's starting target (MainCameraUtilities.SceneDefaultTarget).
+    private volatile string pendingCameraTarget;
 
     //Timing data for measuring livestreaming metrics
     private DateTime imageRequestStartTime; //System time image request received from Basilisk sim
@@ -113,7 +123,7 @@ public class DirectCommunicationController : MonoBehaviour
             return bridgeTransport.Connect();
         }
 
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL
         if (DataManager.SocketIsReceiveOnly) //Set up receive only socket
         {
             //Add only the NetMQ message types that can be handled in receive only
@@ -146,6 +156,10 @@ public class DirectCommunicationController : MonoBehaviour
     /// </summary>
     private void Update()
     {
+        HandleNewRun();
+        HandleCameraCommand();
+        ScarletPresentation.Poll(); //A pending "FAULTS" request
+
         if (bridgeTransport == null)
         {
             return;
@@ -197,7 +211,7 @@ public class DirectCommunicationController : MonoBehaviour
             return;
         }
 
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL
         if (DataManager.SocketIsReceiveOnly)
         {
             subSocket.Stop();
@@ -239,7 +253,132 @@ public class DirectCommunicationController : MonoBehaviour
         MessageList.LatestBroadcastSyncSettings = syncSettings;
     }
 
-#if !UNITY_WEBGL || UNITY_EDITOR
+    /// <summary>
+    /// Called on the socket thread for a "RESET" request: the streaming application
+    /// is about to start a new run. The old run stays on screen; the new run's
+    /// messages are held back until its first one arrives (see HandleNewRun).
+    /// </summary>
+    private void RequestNewRun()
+    {
+        lock (newRunGate)
+        {
+            awaitingNewRun = true;
+            newRunMessages.Clear();
+        }
+    }
+
+    /// <summary>
+    /// The body name in a "CAMERA" request, "CAMERA <name>" for a spacecraft or
+    /// celestial body, "CAMERA" alone for the run's starting target. Empty
+    /// string means default; unknown text is resolved (or reported) later.
+    /// </summary>
+    private static string CameraTargetFromRequest(string requestString)
+    {
+        int start = requestString.IndexOf("CAMERA", StringComparison.Ordinal);
+        return start < 0 ? "" : requestString.Substring(start + 6).Trim();
+    }
+
+    /// <summary>
+    /// Main-thread half of the app's "CAMERA" request: point the main camera at
+    /// the named body (spacecraft or celestial), or back at the run's starting
+    /// target when no name was given. No-op when the Main Scene is not up.
+    /// </summary>
+    private void HandleCameraCommand()
+    {
+        string target = pendingCameraTarget;
+        if (target == null)
+        {
+            return;
+        }
+        pendingCameraTarget = null;
+        if (MainCameraUtilities.MainCamera == null)
+        {
+            return; //Still on the Startup Scene: no camera to point yet
+        }
+        //Every target, spacecraft included, gets Vizard's own camera view of it,
+        //which the presenter can orbit and zoom with the mouse as usual.
+        //(ScarletPresentation's Earth-relative framing re-positioned the camera
+        //every frame, so a framed spacecraft could not be orbited: not used.)
+        ScarletPresentation.StopFraming();
+        //"cluster": every spacecraft in view (ScarletPresentation.ViewCluster)
+        if (target == "cluster")
+        {
+            if (!ScarletPresentation.ViewCluster())
+            {
+                VizardGUISettings.UpdateErrorMessages("Cluster view: no spacecraft in the scene yet.", true);
+            }
+            return;
+        }
+        string name = target.Length > 0 ? target : MainCameraUtilities.SceneDefaultTarget;
+        if (string.IsNullOrEmpty(name))
+        {
+            return; //A scene without a starting target keeps Vizard's own choice
+        }
+        GameObject targetObject = CelestialBodyStateUtilities.GetGameObjectWithBodyName(name);
+        if (targetObject == null)
+        {
+            VizardGUISettings.UpdateErrorMessages($"Camera target '{name}' is not in the scene.", true);
+            return;
+        }
+        MainCameraUtilities.MainCamera.GetComponent<MainCameraViewManager>()
+            .SetupChangeOfMainCameraTarget(targetObject);
+    }
+
+    /// <summary>
+    /// A live message from the socket thread: held while a new run is pending,
+    /// otherwise added to the message list as usual.
+    /// </summary>
+    private void AddLiveMessage(VizMessage vizMessage)
+    {
+        lock (newRunGate)
+        {
+            if (awaitingNewRun)
+            {
+                newRunMessages.Enqueue(vizMessage);
+                return;
+            }
+
+            MessageList.AddLiveMessage(vizMessage);
+        }
+    }
+
+    /// <summary>
+    /// Main-thread half of the new-run reset. Once the new run's first message has
+    /// arrived, tears the old run down, hands the held messages over and reloads the
+    /// Main Scene, all in one frame -- the same order DataManager.LoadFile uses. The
+    /// old scene is never left running over an empty message list.
+    /// </summary>
+    private void HandleNewRun()
+    {
+        lock (newRunGate)
+        {
+            if (!awaitingNewRun || newRunMessages.Count == 0)
+            {
+                return;
+            }
+
+            awaitingNewRun = false;
+            //Still on the Startup Scene: no run is displayed and the Startup Scene
+            //loads the Main Scene itself once messages arrive
+            bool runDisplayed = SceneManager.GetActiveScene().name == DataManager.MainSceneToLoad;
+            if (runDisplayed)
+            {
+                DataManager.ResetForNewLiveRun();
+            }
+
+            while (newRunMessages.Count > 0)
+            {
+                MessageList.AddLiveMessage(newRunMessages.Dequeue());
+            }
+
+            if (runDisplayed)
+            {
+                SceneManager.LoadScene(DataManager.MainSceneToLoad);
+            }
+        }
+    }
+
+#if !UNITY_WEBGL 
     /// <summary>
     /// Returns the correct response for a Basilisk request message
     /// </summary>
@@ -255,6 +394,7 @@ public class DirectCommunicationController : MonoBehaviour
         {
             requestString = request[0].ConvertToString();
         }
+        string requestText = requestString; //As sent: "CAMERA <name>" carries its argument
 
         if (requestString.Contains("REQUEST_IMAGE"))
         {
@@ -272,6 +412,38 @@ public class DirectCommunicationController : MonoBehaviour
         {
             requestString = "SIM_UPDATE";
         }
+        else if (requestString.Contains("RESET"))
+        {
+            requestString = "RESET";
+        }
+        else if (requestString.Contains("CAMERA"))
+        {
+            requestString = "CAMERA";
+        }
+        else if (requestString.Contains("FAULTS"))
+        {
+            requestString = "FAULTS";
+        }
+        else if (requestString.Contains("SPACECRAFT_SIZE"))
+        {
+            requestString = "SPACECRAFT_SIZE";
+        }
+        else if (requestString.Contains("MODELS"))
+        {
+            requestString = "MODELS";
+        }
+        else if (requestString.Contains("PLAYBACK_RATE"))
+        {
+            requestString = "PLAYBACK_RATE";
+        }
+        else if (requestString.Contains("PLAYBACK_LIVE"))
+        {
+            requestString = "PLAYBACK_LIVE";
+        }
+        else if (requestString.Contains("PLAYBACK_SEEK"))
+        {
+            requestString = "PLAYBACK_SEEK";
+        }
 
         //Take the correct action for the Basilisk request
         switch (requestString)
@@ -283,6 +455,44 @@ public class DirectCommunicationController : MonoBehaviour
             case "SIM_UPDATE":
                 //Receive a VizMessage containing an update on all the scenario objects in the scene
                 ReceiveVizMessageResSocket(request);
+                response.Append("OK");
+                break;
+            case "RESET":
+                //The streaming application is about to start a new run on this stream
+                RequestNewRun();
+                response.Append("OK");
+                break;
+            case "PLAYBACK_RATE":
+                //The demo app's simulation speed: replay plays the past at it (LiveSmoothing)
+                response.Append(LiveSmoothing.SetRateFromRequest(requestText) ? "OK" : "ERROR");
+                break;
+            case "PLAYBACK_SEEK":
+                //Replay from a sim time, as a scrub would (LiveSmoothing, main thread)
+                response.Append(LiveSmoothing.SeekFromRequest(requestText) ? "OK" : "ERROR");
+                break;
+            case "PLAYBACK_LIVE":
+                //The demo app's "Go live": jump to the live edge (LiveSmoothing, main thread)
+                LiveSmoothing.RequestGoLive();
+                response.Append("OK");
+                break;
+            case "FAULTS":
+                //The demo app's faulted spacecraft: flashing fault rings (ScarletPresentation)
+                ScarletPresentation.SetFaultsFromRequest(requestText);
+                response.Append("OK");
+                break;
+            case "SPACECRAFT_SIZE":
+                //The demo app's satellite size in planet local view (ScarletPresentation)
+                response.Append(ScarletPresentation.SetSpacecraftSizeFromRequest(requestText) ? "OK" : "ERROR");
+                break;
+            case "MODELS":
+                //The demo app's choice of model or sprite per spacecraft (ScarletPresentation)
+                ScarletPresentation.SetModelsFromRequest(requestText);
+                response.Append("OK");
+                break;
+            case "CAMERA":
+                //The demo app asked for a different main camera target, by name:
+                //applied on the main thread (HandleCameraCommand), like RESET
+                pendingCameraTarget = CameraTargetFromRequest(requestText);
                 response.Append("OK");
                 break;
             case "REQUEST_INPUT":
@@ -360,7 +570,7 @@ public class DirectCommunicationController : MonoBehaviour
         {
             //A browser has no writable filesystem to save the run to, so the
             //accumulated messages are simply dropped on exit.
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL 
             MessageList.SaveMessages("last_run.bin");
 #endif
             bridgeTransport.Close();
@@ -368,7 +578,7 @@ public class DirectCommunicationController : MonoBehaviour
             return;
         }
 
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL 
         MessageList.SaveMessages("last_run.bin");
 
         if (!DataManager.SocketIsReceiveOnly)
@@ -387,7 +597,7 @@ public class DirectCommunicationController : MonoBehaviour
 #endif
     }
 
-#if !UNITY_WEBGL || UNITY_EDITOR
+#if !UNITY_WEBGL 
     /// <summary>
     /// Handles receiving a VizMessage in two-way communication
     /// </summary>
@@ -398,8 +608,8 @@ public class DirectCommunicationController : MonoBehaviour
         byte[] data = message[3].ToByteArray();
         //Parse the vizMessage from the third frame
         VizMessage vizMessage = VizMessage.Parser.ParseFrom(data);
-        //Add it to the message dictionary in MessageList
-        MessageList.AddLiveMessage(vizMessage);
+        //Add it to the message dictionary in MessageList (or hold it for a pending new run)
+        AddLiveMessage(vizMessage);
     }
 
     /// <summary>

@@ -67,6 +67,8 @@ public class ItsAboutTime : MonoBehaviour
     //Real time playback calculation variables
     private DateTime systemTimeAtCurrentMsgDisplayStart;
     private double simTimeOfCurrentMsg;
+    // Seconds without a new message before a live stream reads as paused
+    private const double LiveStreamIdleSeconds = 1.0;
     private bool archiveFractionSet;
 
     // Start is called before the first frame update
@@ -134,7 +136,18 @@ public class ItsAboutTime : MonoBehaviour
 
     void FixedUpdate()
     {
-        if ((VizardGUISettings.AssetLoadingComplete) && (DataManager.FirstMessageDisplayed))
+        if ((VizardGUISettings.AssetLoadingComplete) && (DataManager.FirstMessageDisplayed)
+            && LiveSmoothing.Active)
+        {
+            //A live run: LiveSmoothing chooses the moment drawn (live or replay)
+            LiveSmoothing.Apply(playbackControlMultiplier);
+            if (!MessageList.PlaybackPaused)
+            {
+                UpdateFPSDisplay();
+            }
+            RefreshTimeDisplays(playbackSpeed);
+        }
+        else if ((VizardGUISettings.AssetLoadingComplete) && (DataManager.FirstMessageDisplayed))
         {
             if (DataManager.IsLiveSim && DataManager.DisplayMostRecentMessage)
             {
@@ -158,6 +171,7 @@ public class ItsAboutTime : MonoBehaviour
         }
         else
         {
+            LiveSmoothing.Reset();
             MessageList.CurrentIndex = 0;
             EnablePlaybackControls(false);
         }
@@ -249,6 +263,15 @@ public class ItsAboutTime : MonoBehaviour
 
     private double TimeMsgUpdate()
     {
+        // No new message since the last frame (a live stream between updates,
+        // paused or ended): keep the last speed. Counting it as zero dragged the
+        // filtered speed towards 0, and the readout into ever-growing "1/Nx"
+        // values, whenever the simulation paused or finished.
+        if (MessageList.CurrentMessage.CurrentTime.SimTimeElapsed / 1e9 == simTimeOfCurrentMsg)
+        {
+            return playbackSpeed;
+        }
+
         TimeSpan elapsedSystemTime = DateTime.Now - systemTimeAtCurrentMsgDisplayStart;
         double elapsedSimTime = MessageList.CurrentMessage.CurrentTime.SimTimeElapsed / 1e9 - simTimeOfCurrentMsg;
         systemTimeAtCurrentMsgDisplayStart = DateTime.Now;
@@ -266,6 +289,7 @@ public class ItsAboutTime : MonoBehaviour
         if (!MessageList.PlaybackPaused)
         {
             playbackControlMultiplier *= 2f;
+            VizardCommandLog.Log("speed_up", $"multiplier={VizardCommandLog.Value(playbackControlMultiplier)}");
             UpdateDataRateDisplay();
             if (runInRealTimeMode)
             {
@@ -279,6 +303,7 @@ public class ItsAboutTime : MonoBehaviour
         if (!MessageList.PlaybackPaused)
         {
             playbackControlMultiplier /= 2f;
+            VizardCommandLog.Log("slow_down", $"multiplier={VizardCommandLog.Value(playbackControlMultiplier)}");
             UpdateDataRateDisplay();
             if (runInRealTimeMode)
             {
@@ -312,12 +337,14 @@ public class ItsAboutTime : MonoBehaviour
     {
         if (VizardGUISettings.AssetLoadingComplete)
         {
+            VizardCommandLog.Log(MessageList.PlaybackPaused ? "play" : "pause");
             if (MessageList.PlaybackPaused)
             {
                 SetupResumePlayback();
             }
             else
             {
+                LiveSmoothing.PausedByViewer();     //A live run: play resumes from here, behind live
                 SetupPausePlayback();
             }
         }
@@ -373,7 +400,8 @@ public class ItsAboutTime : MonoBehaviour
             MessageList.CurrentMessage.CurrentTime.SimTimeElapsed / (1e9); //time in seconds
         if (!MessageList.PlaybackPaused)
         {
-            if (runInRealTimeMode)
+            //LiveSmoothing's frames already carry a smoothly advancing time: no extrapolation
+            if (runInRealTimeMode && !LiveSmoothing.Active)
             {
                 TimeSpan systemInterval = DateTime.Now - missionMsgRolloverSystemTime;
                 double systemSecondsElapsed = systemInterval.TotalSeconds;
@@ -406,6 +434,20 @@ public class ItsAboutTime : MonoBehaviour
 
     private void UpdatePlaybackSpeedDisplay(double newSpeed)
     {
+        if (LiveSmoothing.Active)
+        {
+            playbackSpeedText.text = LiveSmoothing.Readout();      //LIVE, or how far behind and at what speed
+            return;
+        }
+
+        // A live simulation that has stopped sending (paused or finished)
+        if (DataManager.IsLiveSim && !runInRealTimeMode &&
+            (DateTime.Now - systemTimeAtCurrentMsgDisplayStart).TotalSeconds > LiveStreamIdleSeconds)
+        {
+            playbackSpeedText.text = "PAUSED";
+            return;
+        }
+
         if (!MessageList.PlaybackPaused)
         {
             double filteredPlaybackSpeed = CalculatePlaybackSpeed(newSpeed);
@@ -476,6 +518,12 @@ public class ItsAboutTime : MonoBehaviour
 
                 MessageList.SetNextIndex(MessageList.TimestepsTotal-1);
                 DataManager.DisplayMostRecentMessage = false;
+                if (!MessageList.FollowLive)
+                {
+                    //Playback has caught up with the newest message: follow the stream again
+                    MessageList.FollowLive = true;
+                    VizardCommandLog.Log("live_resumed", "reason=caught_up");
+                }
             }
             else
             {
@@ -524,8 +572,9 @@ public class ItsAboutTime : MonoBehaviour
 
     public float GetArchiveFraction()
     {
-        // Prevent jitter of slider when new frames are added but the current index isn't immediately updated
-        if (DataManager.IsLiveSim && MessageList.CurrentIndex + 2 >= MessageList.TimestepsTotal)
+        // Prevent jitter of slider when new frames are added but the current index isn't immediately updated.
+        // Following a live run (drawn from LiveSmoothing's buffer, a little behind): at the end.
+        if (DataManager.IsLiveSim && (MessageList.FollowLive || MessageList.CurrentIndex + 2 >= MessageList.TimestepsTotal))
         {
             return 1;
         }
@@ -539,6 +588,7 @@ public class ItsAboutTime : MonoBehaviour
 
     public void TogglePlaybackMode(bool realTimeOn)
     {
+        VizardCommandLog.Log("playback_mode", realTimeOn ? "mode=real_time" : "mode=data_rate");
         if (realTimeOn)
         {
             dataRateDisplay.SetActive(false);
@@ -648,6 +698,7 @@ public class ItsAboutTime : MonoBehaviour
 
     public void GoToMessage(string goToID)
     {
+        VizardCommandLog.Log("go_to_message", $"to={VizardCommandLog.Value(goToID)}");
         int messageID = int.Parse(goToID);
         if ((messageID > 0) && (messageID <= MessageList.TimestepsTotal))
         {

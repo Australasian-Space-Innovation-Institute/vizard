@@ -38,6 +38,7 @@ public static class MainCameraUtilities
     public static int CameraTargetIndex;    //Index of main camera target object in VizMessage.Spacecraft[] or VizMessage.CelestialBodies[]
     public static bool CameraTargetIsSpacecraftOrEffector; //True if current main camera target is a spacecraft or effector
     public static int CameraTargetParentBodyIndex;  //Index of camera target's parent body in VizMessage.CelestialBodies[]
+    public static string SceneDefaultTarget; //Target the scene started with, for "CAMERA" requests with no name
 
     //Range to main target
     private static double trueCameraDistanceToTargetMeters; //[meters] True distance from camera to camera target in meters (spacecraft local view) (when distance is greater than projection wall, this value will be increased without moving camera and used to scale all objects
@@ -286,6 +287,7 @@ public static class MainCameraUtilities
         CameraTargetIndex=0;
         CameraTargetIsSpacecraftOrEffector = false;
         CameraTargetParentBodyIndex = 0;
+        SceneDefaultTarget = null;
         trueCameraDistanceToTargetMeters = 0;
         SpacecraftLocalTransitionBoundaryUnityUnits = 5000.0f; 
         PlanetLocalTransitionBoundaryUnityUnits = 20000.0f;

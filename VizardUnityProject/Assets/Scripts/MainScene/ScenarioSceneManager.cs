@@ -331,6 +331,7 @@ public class ScenarioSceneManager : MonoBehaviour
 			Destroy(originTarget);
 		}
 		//Set the main camera target
+		MainCameraUtilities.SceneDefaultTarget = bodyToTarget;
 		MainCameraUtilities.MainCamera.GetComponent<MainCameraViewManager>().ApplyVizMessageCameraTarget(bodyToTarget);
 
 	}

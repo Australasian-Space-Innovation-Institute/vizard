@@ -1253,7 +1253,16 @@ public class SpacecraftController : MonoBehaviour {
         bool turnSpriteOnThisFrame = false;
 
         float distanceFromCamera = (transform.position-cameraToUse.transform.position).magnitude;
-        if (VizardGUISettings.ShowSpritesForSpacecraft)
+        //Scarlet demo app ("MODELS a,b"): once it has chosen, a spacecraft it listed is always
+        //its model and any other always a sprite, at any distance; until then Vizard's own rule.
+        //An effector follows its parent spacecraft.
+        int modelChoice = ScarletPresentation.ModelChoice(
+            isEffector && parentSpacecraft != null ? parentSpacecraft.name : spacecraftName);
+        if (VizardGUISettings.ShowSpritesForSpacecraft && modelChoice < 0)
+        {
+            turnSpriteOnThisFrame = true;
+        }
+        else if (VizardGUISettings.ShowSpritesForSpacecraft && modelChoice == 0)
         {
             if (scBeyondThreshold)
             {

@@ -342,6 +342,7 @@ public class MainCameraViewManager : MonoBehaviour
     {
         if (newTarget != null)
         {
+            VizardCommandLog.Log("camera_target", $"target={VizardCommandLog.Value(newTarget.name)}");
             bool newTargetIsSC = false;
             if (!newTarget.CompareTag("OriginTarget"))
             {

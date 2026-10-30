@@ -131,10 +131,21 @@ public class GroundTrackOsculating : MonoBehaviour
     private bool CheckParentBodyRotates()
     {
 	    //Spot check some rotations
-	    double[] firstMessageRotation = MessageList.FirstMessage.CelestialBodies[parentBodyIndex].Rotation.ToArray();
-	    double[] secondMessageRotation = MessageList.GetMessageAtIndex(1).CelestialBodies[parentBodyIndex].Rotation.ToArray();
+	    //Scarlet demo app: a live run's scene can be set up before its second
+	    //message has arrived (a reset mid-stream); with too few messages to
+	    //compare, assume the body rotates (Earth does) rather than throw, which
+	    //aborted the whole scene setup.
+	    VizMessage firstMessage = MessageList.FirstMessage;
+	    VizMessage secondMessage = MessageList.GetMessageAtIndex(1);
 	    int randomMessage = UnityEngine.Random.Range(MessageList.LastMessageIndexOfPlottedMessages/2, MessageList.LastMessageIndexOfPlottedMessages);
-	    double[] spotCheckMessageRotation = MessageList.GetMessageAtIndex(randomMessage).CelestialBodies[parentBodyIndex].Rotation.ToArray();
+	    VizMessage spotCheckMessage = MessageList.GetMessageAtIndex(randomMessage);
+	    if (firstMessage == null || secondMessage == null || spotCheckMessage == null)
+	    {
+		    return true;
+	    }
+	    double[] firstMessageRotation = firstMessage.CelestialBodies[parentBodyIndex].Rotation.ToArray();
+	    double[] secondMessageRotation = secondMessage.CelestialBodies[parentBodyIndex].Rotation.ToArray();
+	    double[] spotCheckMessageRotation = spotCheckMessage.CelestialBodies[parentBodyIndex].Rotation.ToArray();
 
 	    for (int i = 0; i < 9; i++)
 	    {
