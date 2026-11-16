@@ -30,6 +30,14 @@
    planet local scale (Vizard keeps following that spacecraft), and the
    camera is put above it, radially out from Earth, far enough to fit every
    spacecraft. Done over a few frames so each Vizard transition completes.
+ - "CLOUDS on|off" (on at start): a cloud layer over Earth. The open-source
+   Vizard has no HD Earth (its clouds), so this is the demo's own: a shell
+   just above Earth's model (its mesh, so the map lines up) drawn with
+   Resources/Scarlet/CloudLayer (Standard, Fade: lit, so the night side is
+   dark) and Resources/Scarlet/clouds.png, a procedural cloud map made by
+   Scarlet/make_cloud_texture.py -- a backdrop, not the simulation's cloud
+   cover. Re-attached whenever Vizard replaces Earth's model; hidden with it.
+   Vizard logs "clouds state=on|off".
 */
 
 using System;
@@ -46,6 +54,14 @@ public class ScarletPresentation : MonoBehaviour
     private static bool modelsChosen;              // false: Vizard's own sprite rule ("MODELS auto")
     private static string drawnReported;           // the last "models_drawn" reported
     private static float nextDrawnCheck;
+    private static volatile int cloudsRequest = -1; // "CLOUDS on|off" from the socket thread: 1, 0; -1 none
+    private static bool cloudsOn = true;            // main thread
+    private static float nextCloudCheck;
+    private static GameObject cloudShell;           // the layer, a child of Earth's model
+    private static GameObject cloudHost;            // the Earth model it is attached to
+    private static Material cloudMaterial;
+    private static bool cloudMaterialMissing;
+    private const float CloudShellScale = 1.004f;   // ~25 km above the surface
 
     private string framed;                 // spacecraft being framed; null: Vizard's own view
     private string measuredFor;
@@ -277,6 +293,114 @@ public class ScarletPresentation : MonoBehaviour
         }
     }
 
+    /// <summary>"CLOUDS on|off" from the socket thread. False: neither.</summary>
+    public static bool SetCloudsFromRequest(string request)
+    {
+        int start = request.IndexOf("CLOUDS", StringComparison.Ordinal);
+        string state = start < 0 ? "" : request.Substring(start + 6).Trim().ToLowerInvariant();
+        if (state == "on" || state == "1" || state == "true")
+        {
+            cloudsRequest = 1;
+            return true;
+        }
+        if (state == "off" || state == "0" || state == "false")
+        {
+            cloudsRequest = 0;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Earth's current model, or null (no Earth in this scene yet).</summary>
+    private static GameObject EarthModel()
+    {
+        foreach (PlanetController planet in FindObjectsByType<PlanetController>(FindObjectsSortMode.None))
+        {
+            if (planet.bodyDictionaryKey == "earth" && planet.planetModel != null)
+            {
+                return planet.planetModel;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>Keep the cloud layer on Earth's model while clouds are on (a few times a second).</summary>
+    private static void UpdateClouds()
+    {
+        int request = cloudsRequest;
+        if (request >= 0)
+        {
+            cloudsRequest = -1;
+            cloudsOn = request == 1;
+            nextCloudCheck = 0f;
+            VizardCommandLog.Log("clouds", "state=" + (cloudsOn ? "on" : "off"));
+        }
+        if (Time.unscaledTime < nextCloudCheck)
+        {
+            return;
+        }
+        nextCloudCheck = Time.unscaledTime + 0.25f;
+        GameObject earth = cloudsOn ? EarthModel() : null;
+        if (earth == null)
+        {
+            if (cloudShell != null)
+            {
+                Destroy(cloudShell);
+            }
+            cloudShell = null;
+            cloudHost = null;
+            return;
+        }
+        // A replaced Earth model takes the old layer with it (its child): make a new one.
+        if (cloudShell == null || cloudHost != earth)
+        {
+            if (cloudShell != null)
+            {
+                Destroy(cloudShell);
+            }
+            cloudShell = MakeCloudShell(earth);
+            cloudHost = cloudShell != null ? earth : null;
+        }
+        if (cloudShell != null)
+        {
+            Renderer earthRenderer = earth.GetComponent<Renderer>();
+            cloudShell.GetComponent<Renderer>().enabled = earthRenderer == null || earthRenderer.enabled;
+        }
+    }
+
+    private static GameObject MakeCloudShell(GameObject earth)
+    {
+        MeshFilter earthMesh = earth.GetComponent<MeshFilter>();
+        if (earthMesh == null || earthMesh.sharedMesh == null)
+        {
+            return null;
+        }
+        if (cloudMaterial == null && !cloudMaterialMissing)
+        {
+            cloudMaterial = Resources.Load<Material>("Scarlet/CloudLayer");
+            cloudMaterialMissing = cloudMaterial == null;
+            if (cloudMaterialMissing)
+            {
+                Debug.LogWarning("[SCARLET] Resources/Scarlet/CloudLayer not found: no clouds");
+            }
+        }
+        if (cloudMaterial == null)
+        {
+            return null;
+        }
+        var shell = new GameObject("ScarletClouds");
+        shell.layer = earth.layer;
+        shell.transform.SetParent(earth.transform, false);
+        shell.transform.localScale = Vector3.one * CloudShellScale;
+        shell.AddComponent<MeshFilter>().sharedMesh = earthMesh.sharedMesh;
+        var renderer = shell.AddComponent<MeshRenderer>();
+        renderer.sharedMaterial = cloudMaterial;
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        Debug.Log("[SCARLET] clouds on " + earth.name);
+        return shell;
+    }
+
     /// <summary>"SPACECRAFT_SIZE x" from the socket thread. False: not a size above 0.</summary>
     public static bool SetSpacecraftSizeFromRequest(string request)
     {
@@ -292,9 +416,10 @@ public class ScarletPresentation : MonoBehaviour
         return true;
     }
 
-    /// <summary>Apply pending FAULTS, MODELS and SPACECRAFT_SIZE requests (main thread, every frame).</summary>
+    /// <summary>Apply pending FAULTS, MODELS, SPACECRAFT_SIZE and CLOUDS requests (main thread, every frame).</summary>
     public static void Poll()
     {
+        UpdateClouds();
         string modelRequest = pendingModels;
         if (modelRequest != null)
         {

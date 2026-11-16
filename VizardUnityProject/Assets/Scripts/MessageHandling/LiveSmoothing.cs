@@ -7,10 +7,12 @@
  run (Vizard's own playback code is bypassed while it is active):
 
  - LIVE (MessageList.FollowLive): drawn from a buffer, BufferWallSeconds of
-   wall time behind the newest frame (at least 1.5 frames), at a smoothly
+   wall time behind the newest frame (at least 1.5 frames; BufferWallSeconds
+   is 0, so 1.5 frames), at a smoothly
    advancing time. The buffer absorbs late or bunched frames: running low
-   plays slower rather than stopping dead, building up plays faster, and an
-   overdue frame (the simulation slowed or paused) slows it to match.
+   plays slower rather than stopping dead, building up plays faster, and when
+   the next frame is overdue (the simulation paused, or a long step) it plays
+   on to the newest frame and holds it, so a pause shows where it stopped.
  - REPLAY (scrubbed back, or paused and resumed): the past plays at the
    simulation's set speed -- told by the app with PLAYBACK_RATE, otherwise
    the measured stream rate -- times Vizard's own speed buttons. The stream
@@ -54,7 +56,9 @@ public static class LiveSmoothing
     // the same rate shows every movement once.
     private const int TargetFps = 50;
     // The live buffer: how far behind the newest frame the drawn time is kept.
-    private const double BufferWallSeconds = 1.0;
+    // 0 wall seconds: only MinBufferFrames, the least that still blends two
+    // frames and absorbs a late one (0.15 s at the app's default 10x; was 1 s).
+    private const double BufferWallSeconds = 0.0;
     private const double MinBufferFrames = 1.5;
     // How strongly the drawn time's speed follows the buffer level: at 0.5,
     // a buffer half empty plays at 75% speed, a buffer 50% over at 125%.
@@ -286,15 +290,21 @@ public static class LiveSmoothing
             }
             else
             {
-                double fill = (streamSim - displaySim) / lagSim;      // 1: buffer at its level
-                double speed = Math.Max(0, Math.Min(2, 1 + BufferGain * (fill - 1)));
                 double since = now - lastArrivalWall;
-                double playRate = rate;
                 if (since > 1.5 * frameSim / rate)
                 {
-                    playRate = Math.Min(rate, frameSim / since);      // the next frame is overdue
+                    // The next frame is overdue: the simulation has paused or is
+                    // inside a long step (UC3's WP1 processing). Play on at the
+                    // stream's pace to the newest frame and hold it there, so the
+                    // moment the simulation stopped at is what is shown.
+                    displaySim = Math.Min(newestSim, displaySim + rate * dt);
                 }
-                displaySim += playRate * speed * dt;
+                else
+                {
+                    double fill = (streamSim - displaySim) / lagSim;  // 1: buffer at its level
+                    double speed = Math.Max(0, Math.Min(2, 1 + BufferGain * (fill - 1)));
+                    displaySim += rate * speed * dt;
+                }
                 replayRate = rate;
             }
         }

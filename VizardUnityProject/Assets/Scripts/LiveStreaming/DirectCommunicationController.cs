@@ -432,6 +432,10 @@ public class DirectCommunicationController : MonoBehaviour
         {
             requestString = "MODELS";
         }
+        else if (requestString.Contains("CLOUDS"))
+        {
+            requestString = "CLOUDS";
+        }
         else if (requestString.Contains("PLAYBACK_RATE"))
         {
             requestString = "PLAYBACK_RATE";
@@ -488,6 +492,10 @@ public class DirectCommunicationController : MonoBehaviour
                 //The demo app's choice of model or sprite per spacecraft (ScarletPresentation)
                 ScarletPresentation.SetModelsFromRequest(requestText);
                 response.Append("OK");
+                break;
+            case "CLOUDS":
+                //The demo app's cloud layer over Earth, on or off (ScarletPresentation)
+                response.Append(ScarletPresentation.SetCloudsFromRequest(requestText) ? "OK" : "ERROR");
                 break;
             case "CAMERA":
                 //The demo app asked for a different main camera target, by name:
