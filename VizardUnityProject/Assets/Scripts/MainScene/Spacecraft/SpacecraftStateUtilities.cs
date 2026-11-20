@@ -56,7 +56,10 @@ public static class SpacecraftStateUtilities{
         {"bsksat", new[] {"Models/BSKSAT_model",          "R"}},
         {"6usat", new[]  {"Models/CubeSAT_6U",            "R"}},
         {"3usat", new[]  {"Models/CubeSAT_3U",            "R"}},
-        {"TRI", new[] {"Models/Triangle",                 "R"}}
+        {"TRI", new[] {"Models/Triangle",                 "R"}},
+        // Scarlet Alpha demo: the SAR satellites (Basilisk modelDictionaryKey "sentinel1SAR")
+        {"sentinel1sar", new[] {"Models/Sentinel1SAR/sentinel1_sar", "R"}},
+        {"iceye", new[] {"Models/ICEYE/ICEYE_vizard", "R"}}  // ICEYE.obj in metres, centred, on the body axes
     };
     public static GameObject GetSpacecraftObject(string spacecraftName){
         foreach(GameObject sc in SpacecraftList){

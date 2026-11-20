@@ -52,6 +52,14 @@ public class DrawLocationMarker : MonoBehaviour
     private int currentAppliedMsgIndex=-1;
     
     private Camera cameraToUse;
+
+    // SCARLET demo: a location given its own label (Location.label, not empty and
+    // not "NOLABEL") always shows it, whatever the global location-label setting
+    // (Basilisk's showLocationLabels, the Labels panel); it still hides behind the
+    // planet like any label. Locations without their own label follow the global
+    // setting as before.
+    private bool hasOwnLabel;
+    private bool LabelShown => VizardGUISettings.ShowLocationLabels || hasOwnLabel;
     private readonly int layerMask = ((1 << 7) | (1 << 9) | (1 << 11) | (1 << 14)); //7=UnlitSC, 9=TrueBodySizeColliders, 11 = Spacecraft, 14 = Antenna (using this instead of LabelMarkers to get double work out of collider)
     
     
@@ -80,9 +88,9 @@ public class DrawLocationMarker : MonoBehaviour
         if (parentFound)
         {
             myLabel = LabelMaker.CreateLabel(name, "Label", myMarker, new Vector2(10, 0), "Locations", 0);
-            myLabel.SetActive(VizardGUISettings.ShowLocationLabels);
             myLabel.GetComponent<TextMeshProUGUI>().text = name; //Set label to display station name by default
             SetLabelText(myMsg);
+            myLabel.SetActive(LabelShown); // SCARLET demo: was ShowLocationLabels, set before the label was read
             if (isFullLocation)
             {
                 myMarker.GetComponent<Renderer>().material = Instantiate(Resources.Load("Materials/Spacecraft_HUD/TransparentMat", typeof(Material)) as Material);
@@ -130,7 +138,12 @@ public class DrawLocationMarker : MonoBehaviour
             }
 
             UpdateMarkerAppearance();
-            if (VizardGUISettings.ShowLocationLabels)
+            // SCARLET demo: an own label comes back after the Labels panel or HideMarker turned it off
+            if (hasOwnLabel && !myLabel.activeSelf)
+            {
+                myLabel.SetActive(true);
+            }
+            if (LabelShown)
             {
                 myLabel.GetComponent<TextMeshProUGUI>().enabled = CheckLocationMarkerVisibleInCamera();
             }
@@ -142,7 +155,8 @@ public class DrawLocationMarker : MonoBehaviour
         myMarker.SetActive(!isHidden);
         if (myLabel != null)
         {
-            myLabel.SetActive(isHidden&&VizardGUISettings.ShowLocationLabels);
+            // SCARLET demo: an own label is off while its location is hidden
+            myLabel.SetActive(hasOwnLabel ? !isHidden : isHidden&&VizardGUISettings.ShowLocationLabels);
         }
     }
     
@@ -226,6 +240,7 @@ public class DrawLocationMarker : MonoBehaviour
         if (!String.IsNullOrEmpty(myMsg.Label))
         {
             myLabel.GetComponent<TextMeshProUGUI>().text = (myMsg.Label == "NOLABEL") ? "" : myMsg.Label;
+            hasOwnLabel = myMsg.Label != "NOLABEL"; // SCARLET demo: empty leaves the label as it was
         }
     }
     
@@ -297,7 +312,7 @@ public class DrawLocationMarker : MonoBehaviour
         Vector3 capsuleShape = new Vector3(1f, 1f, 1.2f) * desiredMarkerScale;
         float markerScale = VizardGUISettings.CalculateScaleForLocationMarker(transform);
         myMarker.transform.localScale = capsuleShape * (markerScale / parentBody.transform.localScale.x);
-        if (VizardGUISettings.ShowLocationLabels)
+        if (LabelShown) // SCARLET demo: was ShowLocationLabels
         {
             myLabel.GetComponent<TextMeshProUGUI>().enabled = CheckLocationMarkerVisibleInCamera();
         }

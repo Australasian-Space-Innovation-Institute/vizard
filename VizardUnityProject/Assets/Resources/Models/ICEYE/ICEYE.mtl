@@ -1,0 +1,8 @@
+# The colour ICEYE.obj names (color_adb5bd: #adb5bd, grey)
+newmtl color_adb5bd
+Ka 0 0 0
+Kd 0.678 0.710 0.741
+Ks 0.2 0.2 0.2
+Ns 20
+d 1
+illum 2

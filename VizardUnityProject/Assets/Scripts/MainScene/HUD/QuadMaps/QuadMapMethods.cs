@@ -37,6 +37,19 @@ public class QuadMapMethods : MonoBehaviour
     private float parentBodyRadius;
     private readonly float bodyOffsetFactor = 1.002f;
 
+    // SCARLET demo: a quad map labelled "STYLE:volume" or "STYLE:glow" is drawn in
+    // that style instead of Vizard's default, and the label is not shown:
+    //   volume  a translucent 3D shape: both faces, no depth writes, fading towards
+    //           its far end from the planet (a sensor's field of regard)
+    //   glow    additive: lightens what is under it (the surface, targets) by its
+    //           colour times its alpha, without covering it (the field's footprint)
+    // Their vertices are drawn where they are sent (no 1.002 lift; glow 1.00005).
+    private const string StylePrefix = "STYLE:";
+    private const float GlowLift = 1.00005f;
+    private string style = "";
+    private static Shader styleShader;
+    private bool hiddenByMessage;
+
     private List<Vector3> vertices = new List<Vector3>();
     private Dictionary<int, VizMessage.Types.QuadMap> myMessages = new Dictionary<int, VizMessage.Types.QuadMap>();
     private int firstIndex;
@@ -78,6 +91,14 @@ public class QuadMapMethods : MonoBehaviour
             {
                 myLabel.GetComponent<TextMeshProUGUI>().enabled = CheckLabelLocationVisibleInCamera();
             }
+
+            // A volume reaches from a planet up to a spacecraft: in the spacecraft-local
+            // view the two are drawn at different scales and it would not meet the
+            // spacecraft, so it is not drawn there.
+            if (style == "volume")
+            {
+                meshObject.SetActive(!hiddenByMessage && !CelestialBodyStateUtilities.ViewIsSpacecraftLocal);
+            }
         }
     }
 
@@ -100,6 +121,7 @@ public class QuadMapMethods : MonoBehaviour
 
         if (parentFound)
         {
+            ApplyStyle(myMapMsg.Label);
             CreateQuads(myMapMsg.Vertices.ToArray());
             if (myMapMsg.Color.Count >= 3)
             {
@@ -113,7 +135,7 @@ public class QuadMapMethods : MonoBehaviour
 
             name = "QuadMap" + quadMapID;
             InitializeLocationMarker();
-            SetLabel(myMapMsg.Label);
+            SetLabel(IsStyleLabel(myMapMsg.Label) ? "NOLABEL" : myMapMsg.Label);
 
             return true;
         }
@@ -128,6 +150,7 @@ public class QuadMapMethods : MonoBehaviour
     }
     private void ApplyQuadMapSettings(VizMessage.Types.QuadMap myMapMsg)
     {
+        hiddenByMessage = myMapMsg.IsHidden;
         if (myMapMsg.IsHidden)
         {
             meshObject.SetActive(false);
@@ -148,6 +171,7 @@ public class QuadMapMethods : MonoBehaviour
             {
                 SetParentBody(myMapMsg.ParentBodyName);
             }
+            ApplyStyle(myMapMsg.Label);
 
             if (myMapMsg.Vertices.Count > 0)
             {
@@ -160,7 +184,7 @@ public class QuadMapMethods : MonoBehaviour
                 SetColor(myMapMsg);
             }
 
-            if (myMapMsg.Label != "")
+            if (myMapMsg.Label != "" && !IsStyleLabel(myMapMsg.Label))
             {
                 string newText = (myMapMsg.Label == "NOLABEL") ? "" : myMapMsg.Label;
                 UpdateLabel(newText);
@@ -212,6 +236,70 @@ public class QuadMapMethods : MonoBehaviour
         CreateTris();
         CreateNormals();
         CreateUV();
+        if (style != "")
+        {
+            CreateColors();
+        }
+    }
+
+    private static bool IsStyleLabel(string label)
+    {
+        return label.StartsWith(StylePrefix);
+    }
+
+    private void ApplyStyle(string label)
+    {
+        if (!IsStyleLabel(label))
+        {
+            return;
+        }
+        string newStyle = label.Substring(StylePrefix.Length);
+        transform.localScale = (newStyle == "glow" ? GlowLift : 1f) * Vector3.one;
+        if (newStyle == style)
+        {
+            return;
+        }
+        style = newStyle;
+        if (styleShader == null)
+        {
+            styleShader = Shader.Find("Hidden/Internal-Colored");
+        }
+        Material material = new Material(styleShader);
+        material.SetInt("_Cull", (int) UnityEngine.Rendering.CullMode.Off);
+        material.SetInt("_ZWrite", 0);
+        if (style == "glow")
+        {
+            material.SetInt("_SrcBlend", (int) UnityEngine.Rendering.BlendMode.One);
+            material.SetInt("_DstBlend", (int) UnityEngine.Rendering.BlendMode.One);
+            material.SetFloat("_ZBias", -1f);
+            material.renderQueue = 3001;
+        }
+        else
+        {
+            material.SetInt("_SrcBlend", (int) UnityEngine.Rendering.BlendMode.SrcAlpha);
+            material.SetInt("_DstBlend", (int) UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            material.renderQueue = 3002;
+        }
+        meshObject.GetComponent<MeshRenderer>().material = material;
+    }
+
+    private void CreateColors()
+    {
+        // The volume: full colour at the end nearest the planet, 40% at the far end.
+        Color[] colors = new Color[vertices.Count];
+        float rMin = float.MaxValue, rMax = float.MinValue;
+        foreach (Vector3 v in vertices)
+        {
+            rMin = Mathf.Min(rMin, v.magnitude);
+            rMax = Mathf.Max(rMax, v.magnitude);
+        }
+        float span = Mathf.Max(rMax - rMin, 1e-6f);
+        for (int i = 0; i < vertices.Count; i++)
+        {
+            float a = style == "volume" ? 1f - 0.6f * (vertices[i].magnitude - rMin) / span : 1f;
+            colors[i] = new Color(1f, 1f, 1f, a);
+        }
+        mf.mesh.colors = colors;
     }
     private void CreateVertices(double[] vertexArray)
     {
@@ -290,7 +378,13 @@ public class QuadMapMethods : MonoBehaviour
 
     private void SetColor(VizMessage.Types.QuadMap myMapMsg)
     {
-        if (myMapMsg.Color.Count >= 4)
+        if (style == "glow")
+        {
+            float a = myMapMsg.Color.Count >= 4 ? myMapMsg.Color[3] / 255f : 1f;
+            meshObject.GetComponent<MeshRenderer>().material.color = new Color(a * myMapMsg.Color[0] / 255f,
+                a * myMapMsg.Color[1] / 255f, a * myMapMsg.Color[2] / 255f, 1f);
+        }
+        else if (myMapMsg.Color.Count >= 4)
         {
             meshObject.GetComponent<MeshRenderer>().material.color = new Color(myMapMsg.Color[0] / 255f,
                 myMapMsg.Color[1] / 255f, myMapMsg.Color[2] / 255f, myMapMsg.Color[3] / 255f);
