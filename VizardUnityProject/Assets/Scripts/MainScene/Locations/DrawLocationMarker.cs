@@ -60,6 +60,16 @@ public class DrawLocationMarker : MonoBehaviour
     // setting as before.
     private bool hasOwnLabel;
     private bool LabelShown => VizardGUISettings.ShowLocationLabels || hasOwnLabel;
+
+    // SCARLET demo: a location with its own label (the demo app's ground stations)
+    // is drawn as a ground station icon (Resources/Scarlet/ground_station_icon.png,
+    // made by Scarlet/make_ground_station_icon.py) in the location's colour,
+    // facing the camera and standing on the surface, instead of the capsule. The
+    // capsule's renderer is turned off but it is kept, collider and all: the
+    // label's visibility test casts a ray at it.
+    private GameObject stationIcon;
+    private Material stationIconMaterial;
+    private const float StationIconScale = 4f;     // the icon's size, in capsule sizes
     private readonly int layerMask = ((1 << 7) | (1 << 9) | (1 << 11) | (1 << 14)); //7=UnlitSC, 9=TrueBodySizeColliders, 11 = Spacecraft, 14 = Antenna (using this instead of LabelMarkers to get double work out of collider)
     
     
@@ -316,6 +326,76 @@ public class DrawLocationMarker : MonoBehaviour
         {
             myLabel.GetComponent<TextMeshProUGUI>().enabled = CheckLocationMarkerVisibleInCamera();
         }
+        UpdateStationIcon(desiredMarkerScale * markerScale / parentBody.transform.localScale.x);
+    }
+
+    /// <summary>SCARLET demo: the ground station icon, for a location with its own label.
+    /// size: the capsule's size in this location's local units.</summary>
+    private void UpdateStationIcon(float size)
+    {
+        MeshRenderer capsule = myMarker.GetComponent<MeshRenderer>();
+        if (!hasOwnLabel)
+        {
+            if (stationIcon != null)
+            {
+                stationIcon.SetActive(false);
+                capsule.enabled = true;
+            }
+            return;
+        }
+        if (stationIcon == null)
+        {
+            stationIcon = CreateStationIcon();
+            if (stationIcon == null)
+            {
+                return;                             // no icon in this build: the capsule stays
+            }
+        }
+        capsule.enabled = false;
+        float iconSize = StationIconScale * size;
+        stationIcon.transform.localScale = Vector3.one * iconSize;
+        stationIcon.transform.localPosition = new Vector3(0, 0, 0.5f * iconSize);   // local z: up from the surface
+        stationIconMaterial.color = capsule.material.color;
+    }
+
+    private GameObject CreateStationIcon()
+    {
+        Texture2D texture = Resources.Load<Texture2D>("Scarlet/ground_station_icon");
+        Material sprite = Resources.Load<Material>("Materials/SpriteMaterial");    // Sprites/Default: tinted, transparent
+        if (texture == null || sprite == null)
+        {
+            return null;
+        }
+        GameObject icon = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        icon.name = name + "StationIcon";
+        DestroyImmediate(icon.GetComponent<Collider>());      // not in the way of the label's raycast
+        icon.layer = myMarker.layer;
+        icon.transform.SetParent(transform, false);
+        stationIconMaterial = new Material(sprite) { mainTexture = texture };
+        MeshRenderer renderer = icon.GetComponent<MeshRenderer>();
+        renderer.material = stationIconMaterial;
+        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        return icon;
+    }
+
+    void LateUpdate()
+    {
+        // SCARLET demo: the ground station icon follows the capsule's visibility and faces the camera.
+        if (stationIcon == null)
+        {
+            return;
+        }
+        bool show = hasOwnLabel && myMarker.activeInHierarchy;
+        if (stationIcon.activeSelf != show)
+        {
+            stationIcon.SetActive(show);
+        }
+        Camera cam = MainCameraUtilities.MainCamera;
+        if (show && cam != null)
+        {
+            stationIcon.transform.rotation = cam.transform.rotation;
+        }
     }
 
     ///<remarks>This is called by a BroadcastMessage from parent body
@@ -371,6 +451,10 @@ public class DrawLocationMarker : MonoBehaviour
     {
         CelestialBodyStateUtilities.LocationsDictionary.Remove(this.name);
         Destroy(myLabel);
+        if (stationIconMaterial != null)
+        {
+            Destroy(stationIconMaterial);           // SCARLET demo: the ground station icon's own material
+        }
     }
 
     public VizMessage.Types.Location GetCurrentLocationSettings()

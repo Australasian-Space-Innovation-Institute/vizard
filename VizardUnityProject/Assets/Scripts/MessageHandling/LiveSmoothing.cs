@@ -22,6 +22,9 @@
  - Vizard's pause: freezes the view only (the stream keeps arriving); play
    continues from there, behind live.
  - Vizard's speed buttons: replay speed. Slowing down while live drops behind.
+ - The speed readout: while live, the speed the app set the simulation to
+   (e.g. "100x"; "LIVE" until it has said); "LIVE (paused)" when frames stop;
+   in replay, how far behind and the replay speed.
 
  In every case the drawn moment is blended from the two frames either side
  of it: positions and velocities lerped, attitudes slerped. Only what is
@@ -183,7 +186,10 @@ public static class LiveSmoothing
         {
             bool streamIdle = lastLatest >= 0 && Time.realtimeSinceStartupAsDouble - lastArrivalWall
                               > Math.Max(1.5, 2 * (rate > 0 && frameSim > 0 ? frameSim / rate : 1));
-            return streamIdle ? "LIVE (paused)" : "LIVE";
+            // SCARLET demo: the speed the app set the simulation to (PLAYBACK_RATE),
+            // in Vizard's own short format ("100x") so it fits the readout; "LIVE"
+            // until the app has said.
+            return streamIdle ? "LIVE (paused)" : appRate > 0 ? FormatRate(appRate) : "LIVE";
         }
         double behind = Math.Max(0, lastLatestSim - displaySim);
         TimeSpan span = TimeSpan.FromSeconds(Math.Round(behind));

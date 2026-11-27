@@ -79,6 +79,32 @@ public class ItsAboutTime : MonoBehaviour
         goToIndexInput.onSubmit.AddListener(GoToMessage);
     }
 
+    // SCARLET demo: the speed readout grows leftward to fit its text ("LIVE (paused)",
+    // "-0:12  100x") instead of truncating in the scene's fixed 60-unit box; the main
+    // canvas (scale with screen height) scales it with the window like the rest of the bar.
+    private const float PlaybackSpeedMinWidth = 60f;
+    private const float PlaybackSpeedPadding = 6f;
+    private string fittedPlaybackSpeedText;
+
+    void LateUpdate()
+    {
+        FitPlaybackSpeedText();
+    }
+
+    private void FitPlaybackSpeedText()
+    {
+        if (playbackSpeedText == null || playbackSpeedText.text == fittedPlaybackSpeedText)
+        {
+            return;
+        }
+        fittedPlaybackSpeedText = playbackSpeedText.text;
+        playbackSpeedText.overflowMode = TextOverflowModes.Overflow;
+        RectTransform box = playbackSpeedText.rectTransform;
+        float width = Mathf.Max(PlaybackSpeedMinWidth,
+            playbackSpeedText.GetPreferredValues(fittedPlaybackSpeedText).x + PlaybackSpeedPadding);
+        box.sizeDelta = new Vector2(width, box.sizeDelta.y);
+    }
+
     private void ApplyUserSettings()
     {
         VizMessage.Types.VizSettingsPb userSettings = MessageList.FirstMessage.Settings;

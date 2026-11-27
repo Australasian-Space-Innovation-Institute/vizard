@@ -34,8 +34,9 @@
    Vizard has no HD Earth (its clouds), so this is the demo's own: a shell
    just above Earth's model (its mesh, so the map lines up) drawn with
    Resources/Scarlet/CloudLayer (Standard, Fade: lit, so the night side is
-   dark) and Resources/Scarlet/clouds.png, a procedural cloud map made by
-   Scarlet/make_cloud_texture.py -- a backdrop, not the simulation's cloud
+   dark) and Resources/Scarlet/clouds.png: NASA's Blue Marble clouds, made by
+   Scarlet/make_cloud_texture_nasa.py (Scarlet/make_cloud_texture.py made the
+   earlier procedural map) -- a backdrop, not the simulation's cloud
    cover. Re-attached whenever Vizard replaces Earth's model; hidden with it.
    Vizard logs "clouds state=on|off".
 */
